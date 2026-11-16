@@ -289,3 +289,36 @@ are filled deterministically from other IDs. Each report saves PNG sheets under
 Image pixels retain their native resolution; only labels and margins are added.
 Panels use existing reconstructions, with no additional sampler calls. The report
 records visual IDs and their order. Visualization does not change metric tensors.
+
+## BM time sweep without validation
+
+```bash
+pip install -e '.[eval,sweep]'
+python -m bridge_restore.sweep --config configs/celeba_bm_T_sweep.yaml
+# Run only one member:
+python -m bridge_restore.sweep --config configs/celeba_bm_T_sweep.yaml --T 1.5
+```
+
+The dedicated sweep loop uses Trainer.train_step(), not Trainer.fit(). It performs
+no intermediate or final validation and does not select a best checkpoint.
+Each T starts independently from the same initialization seed. The configuration
+uses BM, 18M parameters, FP16, microbatch 4, accumulation 4 (effective batch 16),
+one data epoch, then evaluates final EMA weights on exactly the 32 fixed test IDs.
+The final update of the epoch may contain fewer images. AMP-skipped updates
+consume data but do not count as successful optimizer steps.
+
+Outputs under runs/celeba_bm_T_sweep/T_<value>/ include metrics.jsonl (one record
+per attempted update), training_loss.png (raw and moving mean), checkpoints/last.pt,
+periodic checkpoints, test reports and visual panels, and result.json.
+The sweep entry point starts fresh and refuses nonempty run directories; it does
+not implement resume. Do not resume it via the ordinary training entry point,
+which has different validation semantics. Set max_updates in the sweep YAML to
+a positive number to cap the training of each member for a shorter comparison.
+For A100, training.precision can be changed to bfloat16 in experiment.training;
+FP16 is configured for compatibility with T4. Data paths are relative to cwd.
+
+Training loss scales differ with T; compare restoration metrics as well as loss
+curves. These 32 test examples are a diagnostic tuning set in this experiment,
+not an independent final benchmark once used to choose T. The final evaluation
+uses 100 stochastic updates and one final denoiser call for every T; larger T
+therefore also changes the numerical time-grid spacing.

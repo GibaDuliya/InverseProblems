@@ -11,9 +11,11 @@ dependencies = ["torch>=2.4,<3", "numpy>=1.23,<2", "Pillow>=9.1", "PyYAML>=6"]
 
 [project.optional-dependencies]
 eval = ["torchmetrics>=1.4,<2", "torch-fidelity>=0.3,<0.4", "lpips>=0.1.4,<0.2", "torchvision>=0.19"]
+sweep = ["tqdm>=4.66", "matplotlib>=3.7"]
 test = ["pytest>=7"]
 
 [project.scripts]
+bridge-sweep = "bridge_restore.sweep:main"
 bridge-train = "bridge_restore.train:main"
 bridge-evaluate = "bridge_restore.evaluate:main"
 bridge-sample = "bridge_restore.sample:main"
