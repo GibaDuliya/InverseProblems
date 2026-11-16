@@ -4,6 +4,8 @@ import copy
 import gc
 import json
 import math
+import platform
+from importlib.metadata import version, PackageNotFoundError
 from pathlib import Path
 import random
 from dataclasses import asdict, replace
@@ -37,12 +39,19 @@ def plot_loss(records, path):
     ax.legend(); fig.tight_layout(); fig.savefig(path, dpi=150); plt.close(fig)
 
 
+def configure_randomness(seed):
+    """Seed RNGs without forcing deterministic kernels or backend settings."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)  # Seeds CPU and all CUDA devices.
+
+
 def run_experiment(config, epochs=1, max_updates=None):
     """Fresh initialization per T. Epochs count data passes, including AMP skips."""
     output = Path(config.output_dir)
     if output.exists() and any(output.iterdir()): raise ValueError(f'Nonempty output: {output}')
     if config.evaluation.enabled: raise ValueError('Sweep requires evaluation.enabled=false (no validation)')
-    random.seed(config.seed); np.random.seed(config.seed); torch.manual_seed(config.seed)
+    configure_randomness(config.seed)
     data = build_data(config.data, config.split, config.corruption, config.training.batch_size, config.seed)
     bridge = VEBridge(**asdict(config.bridge))
     model = build_model(config.model, bridge, config.data.image_size)
@@ -55,6 +64,16 @@ def run_experiment(config, epochs=1, max_updates=None):
     config.training.max_steps = target
     save_config(config, output/'config.yaml')
     save_manifest(data.split_manifest, output/'split.json')
+    packages = {}
+    for name in ['torch', 'torchvision', 'numpy', 'Pillow', 'lpips', 'torchmetrics']:
+        try: packages[name] = version(name)
+        except PackageNotFoundError: packages[name] = None
+    runtime = {'seed': config.seed,
+               'python': platform.python_version(), 'packages': packages,
+               'cuda': torch.version.cuda, 'cudnn': torch.backends.cudnn.version(),
+               'gpu': torch.cuda.get_device_name() if torch.cuda.is_available() else None,
+               'epochs': epochs, 'max_updates': max_updates, 'planned_updates': target}
+    (output/'runtime.json').write_text(json.dumps(runtime, indent=2))
     records = []
     skipped = 0
     with (output/'metrics.jsonl').open('w') as log, tqdm(total=target, desc=f'T={bridge.sigma_max:g}') as bar:
@@ -80,7 +99,7 @@ def run_experiment(config, epochs=1, max_updates=None):
     if ec.weights == 'ema': trainer.ema.copy_to(inference_model)
     report = evaluator.evaluate(inference_model)
     report.protocol.update({'checkpoint_step':trainer.step, 'split':'test', 'experiment':asdict(config),
-                            'split_checksum':data.split_manifest.checksum, 'checkpoint':str(output/'checkpoints/last.pt')})
+                            'split_checksum':data.split_manifest.checksum, 'checkpoint':str(output/'checkpoints/last.pt'), 'runtime':runtime})
     report.save(output/'test')
     return {'T':bridge.sigma_max, 'steps':trainer.step, 'samples_seen':trainer.samples_seen, 'test':report.summary}
 

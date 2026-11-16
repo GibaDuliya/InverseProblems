@@ -322,3 +322,11 @@ curves. These 32 test examples are a diagnostic tuning set in this experiment,
 not an independent final benchmark once used to choose T. The final evaluation
 uses 100 stochastic updates and one final denoiser call for every T; larger T
 therefore also changes the numerical time-grid spacing.
+
+Sweep randomness: each T resets Python, NumPy and CPU/CUDA PyTorch RNG to the
+same seed. No seed reset occurs before test. Deterministic algorithms and CUDA
+backend settings are not forced. runtime.json captures package versions, GPU and
+execution settings. Exact repeatability on GPU is not guaranteed.
+The current sweep configuration caps training at 500 updates per T; use
+max_updates: null for a full epoch. The Colab notebook is under notebooks/
+(which is intentionally gitignored).
