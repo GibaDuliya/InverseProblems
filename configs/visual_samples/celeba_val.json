@@ -1,0 +1,46 @@
+{
+  "dataset": "celeba",
+  "split": "val",
+  "selection_seed": 42,
+  "selection_method": "shuffle sorted split IDs; accept first unseen identities; val before test",
+  "sample_ids": [
+    "181083.jpg",
+    "169383.jpg",
+    "169281.jpg",
+    "171074.jpg",
+    "167646.jpg",
+    "176359.jpg",
+    "166102.jpg",
+    "169317.jpg",
+    "164599.jpg",
+    "164069.jpg",
+    "170996.jpg",
+    "182093.jpg",
+    "176174.jpg",
+    "175334.jpg",
+    "174156.jpg",
+    "182582.jpg"
+  ],
+  "identity_ids": {
+    "181083.jpg": "2044",
+    "169383.jpg": "3435",
+    "169281.jpg": "854",
+    "171074.jpg": "3348",
+    "167646.jpg": "2500",
+    "176359.jpg": "4474",
+    "166102.jpg": "953",
+    "169317.jpg": "1282",
+    "164599.jpg": "3574",
+    "164069.jpg": "1637",
+    "170996.jpg": "3033",
+    "182093.jpg": "1037",
+    "176174.jpg": "4404",
+    "175334.jpg": "915",
+    "174156.jpg": "3639",
+    "182582.jpg": "2498"
+  },
+  "metadata_sha256": {
+    "identity_CelebA.txt": "c6143857c3e2630ac2da9f782e9c1232e5e59be993a9d44e8a7916c78a6158c0",
+    "list_eval_partition.txt": "fc955bcb3ef8fbdf7d5640d9a8693a8431b5f2ee291a5c1449a1549e7e073fe7"
+  }
+}

@@ -1,0 +1,9 @@
+weights: ema
+subset_size: 512
+metrics:
+  psnr: {}
+  ssim: {}
+  lpips: {backbone: alex}
+selection_metric: lpips
+selection_mode: min
+visual_samples_path: configs/visual_samples/celeba_val.json
