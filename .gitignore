@@ -18,6 +18,14 @@ runs/
 /splits
 /venv
 
+/20261118_013403_479445
+
 
 # Local instructions for GPU diagnostics
 /docs/gpu_checks.md
+
+/docs/slurm.md
+
+/slurm-*.out
+
+/slurm-*.err

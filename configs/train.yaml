@@ -11,7 +11,7 @@ data:
   crop_mode: center_square
   interpolation: bicubic
   antialias: true
-  num_workers: 4
+  num_workers: 2
 split:
   mode: official
 corruption:
