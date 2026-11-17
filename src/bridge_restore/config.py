@@ -59,7 +59,8 @@ class BridgeConfig:
 class TrainingConfig:
     batch_size: int = 16
     grad_accum_steps: int = 1
-    max_steps: int = 10000
+    max_steps: Optional[int] = 10000
+    max_epochs: Optional[int] = None
     lr: float = 1e-4
     weight_decay: float = 0.0
     precision: str = "float32"
@@ -159,9 +160,13 @@ def validate_config(c):
     require(abs(b.cov_xy) < b.sigma_data ** 2, "Require abs(cov_xy) < sigma_data²")
     require(0 < c.sampling.start_offset < b.sigma_max - b.sigma_min, "Invalid absolute start_offset")
     require(positive_int(c.sampling.num_steps), "num_steps must be positive")
-    for key in ("batch_size", "grad_accum_steps", "max_steps", "validation_interval",
+    for key in ("batch_size", "grad_accum_steps", "validation_interval",
                 "validation_batches", "checkpoint_interval", "log_interval"):
         require(positive_int(getattr(c.training, key)), f"training.{key} must be positive")
+    require(c.training.max_epochs is not None or c.training.max_steps is not None, "Set max_epochs or max_steps")
+    for key in ("max_epochs", "max_steps"):
+        value = getattr(c.training, key)
+        require(value is None or positive_int(value), f"training.{key} must be positive or null")
     require(math.isfinite(c.training.lr) and c.training.lr > 0, "Invalid lr")
     require(math.isfinite(c.training.weight_decay) and c.training.weight_decay >= 0, "Invalid weight_decay")
     require(0 <= c.training.ema_decay < 1, "Invalid ema_decay")

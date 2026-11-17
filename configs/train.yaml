@@ -1,7 +1,6 @@
-# Paths are relative to the working directory. Change root before running.
+# Main training: A100 80 GB, effective batch 64. Paths relative to repository root.
 seed: 42
-output_dir: runs/celeba_abm
-
+output_dir: runs/celeba_main/medium_bm_T1
 data:
   factory: bridge_restore.data.datasets:CelebADataset
   kwargs:
@@ -13,68 +12,94 @@ data:
   interpolation: bicubic
   antialias: true
   num_workers: 4
-
 split:
-  mode: official             # use list_eval_partition.txt directly
-
+  mode: official
 corruption:
   factory: bridge_restore.data.corruptions:JPEGCorruption
   kwargs:
     quality: 10
     subsampling: 2
-
 model:
-  mode: abm                  # change to bm and use a different output_dir
+  mode: bm
   channels: 64
-  num_res_blocks: 1
-  channel_mult: [1, 1, 2, 3, 4]
-  attention_resolutions: [16, 8]
+  num_res_blocks: 2
+  channel_mult:
+  - 1
+  - 1
+  - 2
+  - 3
+  - 4
+  attention_resolutions:
+  - 16
+  - 8
   num_heads: 4
   dropout: 0.1
   use_checkpoint: false
-
 bridge:
-  sigma_max: 0.5             # fixed pilot T for BM/ABM
+  sigma_max: 1.0
   sigma_min: 0.001
   sigma_data: 0.5
   cov_xy: 0.0
-
 training:
-  batch_size: 16
-  grad_accum_steps: 1
-  max_steps: 10000
+  batch_size: 32
+  grad_accum_steps: 2
+  max_steps: null
   lr: 0.0001
   weight_decay: 0.0
   precision: bfloat16
   device: cuda
-  ema_decay: 0.999
+  ema_decay: 0.996005996001
   validation_interval: 500
   validation_batches: 10
-  checkpoint_interval: 1000
   log_interval: 50
-
+  max_epochs: 20
 sampling:
   num_steps: 100
-  start_offset: 0.0001       # absolute author-time offset below T
+  start_offset: 0.0001
   clip_output: true
-
 evaluation:
   enabled: true
   weights: ema
-  unit: step                  # epoch validates at completed epoch boundaries
-  interval: 500
-  subset_size: 512             # null uses the entire validation split
+  unit: epoch
+  interval: 1
+  subset_size: 512
   subset_seed: 42
   batch_size: 8
   metrics:
-    psnr: {}
-    ssim: {}
-    lpips: {backbone: alex}
-  selection_metric: lpips
-  selection_mode: min
+    psnr: &id001 {}
+    ssim: &id002 {}
+    lpips: &id003
+      backbone: alex
+    arcface: &id004
+      det_size: 320
+      min_coverage: 0.9
+    musiq: &id005
+      batch_size: 1
   input_baseline: true
-  final_test: true
-  test_subset_size: null
-
+  test_subset_size: 4096
   visual_samples_path: configs/visual_samples/celeba_val.json
   test_visual_samples_path: configs/visual_samples/celeba_test.json
+  criteria:
+    lpips:
+      metric: lpips
+      mode: min
+      test: true
+    identity:
+      metric: arcface
+      mode: max
+      test: true
+    quality:
+      metric: musiq
+      mode: max
+      test: false
+  test_metrics:
+    psnr: *id001
+    ssim: *id002
+    lpips: *id003
+    arcface: *id004
+    musiq: *id005
+    fid: {}
+    kid:
+      subset_size: 1000
+    observation_mse: {}
+    observation_mae: {}

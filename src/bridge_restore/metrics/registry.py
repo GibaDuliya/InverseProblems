@@ -13,6 +13,12 @@ def build_metrics(configs, device, corruption):
         elif name == "lpips":
             from .perceptual import LPIPSMetric
             metric = LPIPSMetric(device, **params)
+        elif name == "arcface":
+            from .identity import ArcFaceMetric
+            metric = ArcFaceMetric(device, **params)
+        elif name == "musiq":
+            from .no_reference import MUSIQMetric
+            metric = MUSIQMetric(device, **params)
         elif name in ("fid", "kid"):
             from .distribution import DistributionMetric
             metric = DistributionMetric(name, device, **params)

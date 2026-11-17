@@ -5,6 +5,8 @@ from pathlib import Path
 import json
 import time
 import copy
+from tqdm.auto import tqdm
+from .evaluation.selection import BestSelection
 from dataclasses import replace
 from .evaluation import RestorationEvaluator
 from .sampling import SDESampler
@@ -72,6 +74,7 @@ class Trainer:
         self.output_dir = Path(config.output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.best_value = None
+        self.selection = BestSelection(config.evaluation.resolved_criteria())
         self.last_validation_step = -1
         self.samples_seen = 0
         self.evaluator = None
@@ -152,7 +155,7 @@ class Trainer:
         generator = torch.Generator(device=self.device).manual_seed(self.config.seed + 100000)
         total, count = 0., 0
         try:
-            for index, batch in enumerate(self.val_loader):
+            for index, batch in enumerate(tqdm(self.val_loader, desc="Validation loss", unit="batch", leave=False)):
                 if index >= self.config.training.validation_batches:
                     break
                 with self._autocast():
@@ -170,80 +173,131 @@ class Trainer:
         record = {"step": self.step, **values}
         with (self.output_dir / "metrics.jsonl").open("a") as f:
             f.write(json.dumps(record) + "\n")
-        print(json.dumps(record), flush=True)
+        tqdm.write(json.dumps(record))
+
+    @property
+    def completed_epochs(self):
+        return self.data_position["epoch"] + int(self.data_position["batch"] == len(self.train_loader))
 
     def fit(self):
         cfg = self.config.training
         start = time.monotonic()
         skipped = 0
-        while self.step < cfg.max_steps:
-            metrics = self.train_step()
-            if not metrics["updated"]:
-                skipped += 1
-                if skipped >= 20:
-                    raise FloatingPointError("20 consecutive AMP overflows; inspect precision and scales")
-                continue
-            skipped = 0
-            if self.step == 1 or self.step % cfg.log_interval == 0:
-                self._log({**metrics, "elapsed_seconds": time.monotonic() - start})
-            if self.evaluator is not None:
-                ec = self.config.evaluation
-                epoch = self.data_position["epoch"] + 1
-                due = (self.step % ec.interval == 0 if ec.unit == "step" else
-                       self.data_position["batch"] == len(self.train_loader) and epoch % ec.interval == 0)
-                if due: self.evaluate_restoration()
-            elif self.step % cfg.validation_interval == 0:
-                self._log(self.validate())
-            if self.step % cfg.checkpoint_interval == 0:
-                self.save(self.output_dir / "checkpoints" / f"step_{self.step:08d}.pt")
-        if self.evaluator is not None and self.last_validation_step != self.step:
-            self.evaluate_restoration()
-        self.save(self.output_dir / "checkpoints" / "last.pt")
-        if self.evaluator is not None and self.config.evaluation.final_test:
-            state = load_checkpoint(self.output_dir / "checkpoints" / "best.pt")
-            ec = self.config.evaluation
-            model = self.evaluation_model if ec.weights == "ema" else copy.deepcopy(self.model)
-            model.load_state_dict(state["ema"]["parameters"] if ec.weights == "ema" else state["model"])
-            test_config = replace(ec, visual_samples_path=ec.test_visual_samples_path, subset_size=ec.test_subset_size, metrics=ec.test_metrics or ec.metrics,
-                                  selection_metric=next(iter(ec.test_metrics or ec.metrics)))
-            evaluator = RestorationEvaluator(self.data_bundle.test_loader.dataset, self.data_bundle.corruption,
-                SDESampler(self.bridge, **asdict(self.config.sampling)), test_config, self.device, split="test")
-            report = evaluator.evaluate(model)
-            report.protocol.update({"checkpoint_step": state["step"], "split": "test", "split_checksum": self.split_checksum})
-            report.save(self.output_dir / "test")
+        def active():
+            return ((cfg.max_steps is None or self.step < cfg.max_steps) and
+                    (cfg.max_epochs is None or self.completed_epochs < cfg.max_epochs))
+        while active():
+            # train_step advances the epoch only when fetching its first batch.
+            at_end = self.data_position["batch"] == len(self.train_loader)
+            epoch = self.data_position["epoch"] + 1 + int(at_end)
+            initial = 0 if at_end else self.data_position["batch"]
+            with tqdm(total=len(self.train_loader), initial=initial,
+                      desc=f"Train epoch {epoch}", unit="batch") as progress:
+                while active():
+                    previous = 0 if self.data_position["batch"] == len(self.train_loader) else self.data_position["batch"]
+                    metrics = self.train_step()
+                    progress.update(self.data_position["batch"] - previous)
+                    progress.set_postfix(loss=f"{metrics['loss']:.4f}", step=self.step)
+                    if not metrics["updated"]:
+                        skipped += 1
+                        if skipped >= 20:
+                            raise FloatingPointError("20 consecutive AMP overflows")
+                    else:
+                        skipped = 0
+                        if self.step == 1 or self.step % cfg.log_interval == 0:
+                            self._log({**metrics, "epoch": epoch, "elapsed_seconds": time.monotonic() - start})
+                    end_epoch = self.data_position["batch"] == len(self.train_loader)
+                    if self.evaluator is not None:
+                        ec = self.config.evaluation
+                        due = (metrics["updated"] and self.step % ec.interval == 0 if ec.unit == "step"
+                               else end_epoch and epoch % ec.interval == 0)
+                        if due and self.last_validation_step != self.step:
+                            self.evaluate_restoration()
+                    elif metrics["updated"] and self.step % cfg.validation_interval == 0:
+                        self._log(self.validate())
+                    if end_epoch:
+                        break
+        if self.evaluator is not None:
+            if self.last_validation_step != self.step:
+                self.evaluate_restoration()
+            self.test_best()
+        else:
+            # Legacy loss-only training has no restoration selection criterion.
+            self.save(self.output_dir / "checkpoints" / "last.pt")
 
     def evaluate_restoration(self):
         ec = self.config.evaluation
         if ec.weights == "ema": self.ema.copy_to(self.evaluation_model)
         report = self.evaluator.evaluate(self.evaluation_model)
-        report.protocol.update({"step": self.step, "split": "val", "split_checksum": self.split_checksum,
+        report.protocol.update({"step": self.step, "epoch": self.completed_epochs,
+                                "split": "val", "split_checksum": self.split_checksum,
                                 "corruption": self.corruption_description, "experiment": asdict(self.config)})
-        report.save(self.output_dir / "validation" / f"step_{self.step:08d}")
+        directory = (f"epoch_{self.completed_epochs:04d}" if self.data_position["batch"] == len(self.train_loader)
+                     else f"step_{self.step:08d}")
+        report.save(self.output_dir / "validation" / directory)
         self.last_validation_step = self.step
-        value = report.summary["restoration"][ec.selection_metric]["mean"]
-        if value != value: raise FloatingPointError("NaN selection metric")
-        self._log({"validation": report.summary, "completed_epochs": self.data_position["epoch"] +
-                   int(self.data_position["batch"] == len(self.train_loader)), "samples_seen": self.samples_seen})
-        if self.best_value is None or (value < self.best_value if ec.selection_mode == "min" else value > self.best_value):
-            self.best_value = value
-            self.save(self.output_dir / "checkpoints" / "best.pt")
+        self._log({"validation": report.summary, "completed_epochs": self.completed_epochs,
+                   "samples_seen": self.samples_seen})
+        improved = self.selection.update(report.summary, self.step, self.completed_epochs)
+        # All criteria have been updated before any checkpoint serializes them.
+        for name in improved:
+            path = self.output_dir / "best" / name
+            report.protocol["criterion"] = name
+            report.save(path)
+            self.save(path / "checkpoint.pt")
+
+    def test_best(self):
+        ec = self.config.evaluation
+        selected = [name for name, rule in self.selection.criteria.items() if rule["test"]]
+        if not selected:
+            return
+        test_config = replace(ec, visual_samples_path=ec.test_visual_samples_path,
+            subset_size=ec.test_subset_size, metrics=ec.test_metrics or ec.metrics,
+            criteria={}, selection_metric=next(iter(ec.test_metrics or ec.metrics)))
+        # Release validation metric networks before loading test metrics.
+        self.evaluator = None
+        evaluator = RestorationEvaluator(self.data_bundle.test_loader.dataset, self.data_bundle.corruption,
+            SDESampler(self.bridge, **asdict(self.config.sampling)), test_config, self.device, split="test")
+        model = self.evaluation_model if ec.weights == "ema" else copy.deepcopy(self.model)
+        tested = {}
+        for name in selected:
+            checkpoint = self.output_dir / "best" / name / "checkpoint.pt"
+            state = load_checkpoint(checkpoint)
+            key = (state["step"], ec.weights)
+            if key in tested:
+                report = tested[key]
+            else:
+                model.load_state_dict(state["ema"]["parameters"] if ec.weights == "ema" else state["model"])
+                report = evaluator.evaluate(model)
+                tested[key] = report
+            report.protocol.update({"checkpoint_step": state["step"], "epoch": state["data_position"]["epoch"] +
+                int(state["data_position"]["batch"] == len(self.train_loader)), "checkpoint": str(checkpoint),
+                "criterion": name, "split": "test", "split_checksum": self.split_checksum})
+            report.save(self.output_dir / "test" / name)
 
     def save(self, path):
         save_checkpoint(path, {
             "format_version": 1, "model": self.model.state_dict(), "ema": self.ema.state_dict(),
             "optimizer": self.optimizer.state_dict(), "scaler": self.scaler.state_dict(),
             "step": self.step, "data_position": self.data_position,
-            "best_value": self.best_value, "last_validation_step": self.last_validation_step, "samples_seen": self.samples_seen,
+            "best_value": self.best_value, "best_by_criterion": self.selection.best, "last_validation_step": self.last_validation_step, "samples_seen": self.samples_seen,
             "config": asdict(self.config), "split_checksum": self.split_checksum,
             "corruption_description": self.corruption_description, "rng": capture_rng_state()})
+
+    @staticmethod
+    def save_resume_copy(path, state):
+        save_checkpoint(path, state)
 
     def resume(self, path):
         state = load_checkpoint(path)
         old, new = state["config"], asdict(self.config)
-        if old.get("evaluation", new["evaluation"]) != new["evaluation"]: raise ValueError("Resume evaluation configuration mismatch")
+        if asdict(type(self.config.evaluation)(**old.get("evaluation", new["evaluation"]))) != new["evaluation"]: raise ValueError("Resume evaluation configuration mismatch")
         self.best_value = state.get("best_value")
+        self.selection.best = state.get("best_by_criterion", {})
         self.last_validation_step = state.get("last_validation_step", -1)
         self.samples_seen = state.get("samples_seen", 0)
+        if self.evaluator is not None and not self.selection.best:
+            self.last_validation_step = -1  # legacy checkpoint: select under the new layout
         # Only operational changes and sampling settings may change on resume.
         for key in ("seed", "model", "bridge", "corruption"):
             if old[key] != new[key]:
@@ -257,6 +311,19 @@ class Trainer:
                 raise ValueError(f"Resume training configuration mismatch: {key}")
         if state["split_checksum"] != self.split_checksum or state["corruption_description"] != self.corruption_description:
             raise ValueError("Resume split/corruption mismatch")
+        # Other criteria may have improved after this historical checkpoint.
+        # Their files are not part of this state: never silently mix branches.
+        for name, record in self.selection.best.items():
+            path = self.output_dir / "best" / name / "checkpoint.pt"
+            if path.exists():
+                saved = load_checkpoint(path)
+                if saved["step"] != record["step"]:
+                    raise ValueError("Resume best-checkpoint history mismatch; start a new output directory")
+            else:
+                if record["step"] == state["step"]:
+                    self.save_resume_copy(path, state)
+                else:
+                    raise ValueError(f"Missing historical best checkpoint for {name}; copy its best directory before resume")
         self.model.load_state_dict(state["model"])
         self.optimizer.load_state_dict(state["optimizer"])
         self.ema.load_state_dict(state["ema"])

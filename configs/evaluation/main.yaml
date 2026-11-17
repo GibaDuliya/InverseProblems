@@ -1,0 +1,39 @@
+enabled: true
+weights: ema
+unit: epoch
+interval: 1
+subset_size: 4096
+subset_seed: 42
+batch_size: 8
+metrics:
+  psnr: {}
+  ssim: {}
+  lpips:
+    backbone: alex
+  arcface:
+    det_size: 320
+    min_coverage: 0.9
+  musiq:
+    batch_size: 1
+  fid: {}
+  kid:
+    subset_size: 1000
+  observation_mse: {}
+  observation_mae: {}
+input_baseline: true
+test_subset_size: 4096
+visual_samples_path: configs/visual_samples/celeba_test.json
+test_visual_samples_path: configs/visual_samples/celeba_test.json
+criteria:
+  lpips:
+    metric: lpips
+    mode: min
+    test: true
+  identity:
+    metric: arcface
+    mode: max
+    test: true
+  quality:
+    metric: musiq
+    mode: max
+    test: false

@@ -1,7 +1,9 @@
 from dataclasses import asdict
+from copy import copy
+from tqdm.auto import tqdm
 import torch
 from torch.utils.data import DataLoader, Subset
-from ..metrics import MetricBatch, build_metrics
+from ..metrics import Metric, MetricBatch, build_metrics
 from .report import EvaluationReport
 from .visualization import load_visual_samples
 
@@ -9,6 +11,7 @@ class RestorationEvaluator:
     """Persistent metrics and fixed subset; generation consumes global RNG."""
     def __init__(self, dataset, corruption, sampler, config, device, split="val"):
         self.config, self.sampler, self.device = config, sampler, device
+        self.split = split
         n = len(dataset)
         if not n: raise ValueError("Empty evaluation dataset")
         if config.subset_size is not None and config.subset_size > n: raise ValueError("Subset exceeds dataset size")
@@ -31,7 +34,16 @@ class RestorationEvaluator:
             self.indices = visual_indices + [remaining[i] for i in permutation[:config.subset_size-len(visual_indices)]]
         self.loader = DataLoader(Subset(dataset, self.indices), batch_size=config.batch_size, shuffle=False)
         self.metrics = build_metrics(config.metrics, device, corruption)
-        self.baseline = build_metrics({k:v for k,v in config.metrics.items() if not k.startswith("observation_")}, device, corruption) if config.input_baseline else {}
+        # Independent accumulators, shared frozen networks and reference caches.
+        self.baseline = {}
+        if config.input_baseline:
+            for name, metric in self.metrics.items():
+                if name.startswith("observation_"):
+                    continue
+                # Scalar metrics accumulate only in values; distribution metrics
+                # also own mutable TorchMetrics state and need their own backend.
+                self.baseline[name] = (copy(metric) if isinstance(metric, Metric) else
+                    build_metrics({name: config.metrics[name]}, device, corruption)[name])
 
     @torch.no_grad()
     def evaluate(self, model):
@@ -44,7 +56,7 @@ class RestorationEvaluator:
         examples = {}
         visual_set = set(self.visual_ids)
         try:
-            for batch in self.loader:
+            for batch in tqdm(self.loader, desc=self.split.capitalize(), unit="batch", leave=False):
                 x0, xT = batch["x0"].to(self.device), batch["xT"].to(self.device)
                 result = self.sampler.sample(model, xT)
                 nfe = result.nfe

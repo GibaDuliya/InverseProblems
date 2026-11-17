@@ -3,6 +3,7 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 .venv/
+venv/
 build/
 dist/
 runs/
@@ -10,10 +11,13 @@ runs/
 /notebooks/
 .DS_Store
 /DDBM/
-/tests/
+# /tests/ — tests are tracked
 /Bridges_Guidance.pdf
 /DDBM_analysis.md
 /Structured.md
 /splits
+/venv
 
 
+# Local instructions for GPU diagnostics
+/docs/gpu_checks.md

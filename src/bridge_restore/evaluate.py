@@ -34,6 +34,10 @@ def main():
     bridge = VEBridge(**asdict(cfg.bridge))
     model = build_model(cfg.model, bridge, cfg.data.image_size).to(args.device)
     model.load_state_dict(state['ema']['parameters'] if ec.weights == 'ema' else state['model'])
+    if args.split == 'test':
+        ec = replace(ec, visual_samples_path=ec.test_visual_samples_path or ec.visual_samples_path,
+                     metrics=ec.test_metrics or ec.metrics, criteria={},
+                     selection_metric=next(iter(ec.test_metrics or ec.metrics)))
     loader = data.val_loader if args.split == 'val' else data.test_loader
     evaluator = RestorationEvaluator(loader.dataset, data.corruption, SDESampler(bridge, **asdict(cfg.sampling)), ec, args.device, split=args.split)
     report = evaluator.evaluate(model)
