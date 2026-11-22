@@ -70,6 +70,7 @@ class TrainingConfig:
     validation_batches: int = 10
     checkpoint_interval: int = 1000
     log_interval: int = 50
+    early_stopping_patience: Optional[int] = None
 
 
 @dataclass
@@ -167,6 +168,10 @@ def validate_config(c):
     for key in ("max_epochs", "max_steps"):
         value = getattr(c.training, key)
         require(value is None or positive_int(value), f"training.{key} must be positive or null")
+    patience = c.training.early_stopping_patience
+    require(patience is None or type(patience) is int and patience >= 0,
+            "training.early_stopping_patience must be a nonnegative integer or null")
+    require(patience is None or c.evaluation.enabled, "Early stopping requires evaluation.enabled")
     require(math.isfinite(c.training.lr) and c.training.lr > 0, "Invalid lr")
     require(math.isfinite(c.training.weight_decay) and c.training.weight_decay >= 0, "Invalid weight_decay")
     require(0 <= c.training.ema_decay < 1, "Invalid ema_decay")

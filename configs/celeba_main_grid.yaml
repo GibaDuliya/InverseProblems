@@ -15,7 +15,7 @@ models:
     num_res_blocks: 1
 experiment:
   seed: 42
-  output_dir: runs/celeba_main
+  output_dir: runs/celeba_main_5ep
   data:
     factory: bridge_restore.data.datasets:CelebADataset
     kwargs:
@@ -56,8 +56,8 @@ experiment:
     sigma_data: 0.5
     cov_xy: 0.0
   training:
-    batch_size: 32
-    grad_accum_steps: 2
+    batch_size: 64
+    grad_accum_steps: 1
     max_steps: null
     lr: 0.0001
     weight_decay: 0.0
@@ -67,7 +67,7 @@ experiment:
     validation_interval: 500
     validation_batches: 10
     log_interval: 50
-    max_epochs: 20
+    max_epochs: 5
   sampling:
     num_steps: 100
     start_offset: 0.0001

@@ -74,3 +74,25 @@ def test_config_rejects_typos_and_invalid_times():
         config_from_dict({"model": {"mod": "bm"}})
     with pytest.raises(ValueError, match="scales"):
         config_from_dict({"bridge": {"sigma_min": 2.}})
+
+
+@pytest.mark.parametrize("invalid", ["loss", "gradient"])
+def test_nonfinite_update_does_not_modify_weights_or_ema(tiny_config, loaders, invalid):
+    model = torch.nn.Linear(3, 3)
+    class Loss:
+        def training_loss(self, model, x0, xT, generator=None):
+            output = model(x0.mean((2, 3)))
+            loss = output.square().mean(1)
+            return loss * float("nan") if invalid == "loss" else loss
+    if invalid == "gradient":
+        model.weight.register_hook(lambda grad: torch.full_like(grad, float("nan")))
+    trainer = Trainer(model, Loss(), *loaders[:2], tiny_config, "split", {})
+    before = deepcopy(model.state_dict())
+    ema = deepcopy(trainer.ema.averaged_parameters)
+    with pytest.raises(FloatingPointError, match="Nonfinite"):
+        trainer.train_step()
+    assert trainer.step == 0 and trainer.samples_seen == 0
+    assert not trainer.optimizer.state
+    for name in before:
+        torch.testing.assert_close(model.state_dict()[name], before[name], rtol=0, atol=0)
+        torch.testing.assert_close(trainer.ema.averaged_parameters[name], ema[name], rtol=0, atol=0)

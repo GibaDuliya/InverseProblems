@@ -91,6 +91,50 @@ def test_identical_test_checkpoints_reuse_generation(tiny_config, loaders, monke
     assert (trainer.output_dir/'test/a/summary.json').read_text()==(trainer.output_dir/'test/b/summary.json').read_text()
 
 
+def test_early_stopping_waits_for_every_criterion(tiny_config, loaders, monkeypatch):
+    import bridge_restore.training as module
+
+    values = iter([(10, 1.0), (9, 1.0), (8, .5), (8, .5), (8, .5)])
+    calls = []
+
+    class Evaluator:
+        def __init__(self, *args, split="val", **kwargs):
+            self.split = split
+
+        def evaluate(self, model):
+            calls.append(self.split)
+            psnr, mae = next(values) if self.split == "val" else (0, 0)
+            return EvaluationReport({"restoration": {"psnr": {"mean": psnr}, "mae": {"mean": mae}}}, [], {})
+
+    monkeypatch.setattr(module, "RestorationEvaluator", Evaluator)
+    tiny_config.training.max_steps = None
+    tiny_config.training.max_epochs = 10
+    tiny_config.training.early_stopping_patience = 1
+    tiny_config.evaluation = EvaluationConfig(
+        enabled=True, unit="epoch", interval=1, metrics={"psnr": {}, "mae": {}},
+        criteria={"p": {"metric": "psnr", "mode": "max", "test": True},
+                  "m": {"metric": "mae", "mode": "min", "test": False}},
+    )
+    bridge = VEBridge(**asdict(tiny_config.bridge))
+    trainer = Trainer(build_model(tiny_config.model, bridge, 8), bridge, *loaders[:2],
+                      tiny_config, "split", {}, SimpleNamespace(corruption=None, test_loader=loaders[2]))
+    trainer.fit()
+
+    assert trainer.completed_epochs == 5
+    assert trainer.selection.best["p"]["epoch"] == 1
+    assert trainer.selection.best["m"]["epoch"] == 3
+    assert calls == ["val"] * 5 + ["test"]
+
+    values = iter([(8, .5), (8, .5)])
+    calls.clear()
+    resumed = Trainer(build_model(tiny_config.model, bridge, 8), bridge, *loaders[:2],
+                      tiny_config, "split", {}, trainer.data_bundle)
+    resumed.resume(trainer.output_dir / "best/m/checkpoint.pt")
+    resumed.fit()
+    assert resumed.completed_epochs == 5
+    assert calls == ["val", "val", "test"]
+
+
 def test_epoch_config_and_grid():
     import yaml
     from pathlib import Path
@@ -99,5 +143,5 @@ def test_epoch_config_and_grid():
     runs=list(configurations(yaml.safe_load(Path('configs/celeba_main_grid.yaml').read_text())))
     assert len(runs)==12
     assert len({cfg.output_dir for _,cfg in runs})==12
-    assert all(cfg.training.max_steps is None and cfg.training.max_epochs==20 for _,cfg in runs)
+    assert all(cfg.training.max_steps is None and cfg.training.max_epochs==5 for _,cfg in runs)
     assert all(cfg.training.batch_size*cfg.training.grad_accum_steps==64 for _,cfg in runs)

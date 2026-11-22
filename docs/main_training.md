@@ -54,8 +54,8 @@ python -m bridge_restore.grid --config configs/celeba_main_grid.yaml
 ## Начальные параметры
 
 - A100 80 GB, BF16; фактический пик GPU-памяти локально не измерялся.
-- 20 эпох (стартовый бюджет, не результат поиска оптимального числа эпох).
-- Batch 32 × accumulation 2 = effective batch 64 для всех моделей.
+- 5 эпох (стартовый бюджет, не результат поиска оптимального числа эпох).
+- Batch 64 × accumulation 1 = effective batch 64 для всех моделей.
 - AdamW: lr=1e-4, weight_decay=0; EMA=0.996005996001.
 - Small: 64 канала, 1 блок — 18.48M; medium: 64 / 2 — 26.00M;
   Числа для BM, ABM отличается лишь входным слоем.
@@ -86,8 +86,15 @@ checkpoint может занимать существенное время; дл
 валидации. Выбор выполняется по EMA. Периодические checkpoint и last.pt в этом
 режиме не пишутся; старый короткий sweep сохранил собственный протокол.
 
+`training.early_stopping_patience` задаёт допустимое число эпох без улучшения.
+После валидации обучение останавливается, если у каждого критерия с его лучшей
+эпохи прошло строго больше указанного числа завершённых эпох. Например, при
+значении 3 и последнем улучшении на эпохе 5 остановка возможна на валидации в
+эпоху 9. Равенство метрик не сбрасывает отсчёт. При `null` ранняя остановка
+выключена. После остановки выполняется обычная тестовая оценка лучших чекпойнтов.
+
 ```
-runs/celeba_main/<name>/
+runs/celeba_main_5ep/<name>/
   config.yaml
   split.json
   metrics.jsonl
@@ -122,7 +129,7 @@ Checkpoint содержит raw-веса, EMA, optimizer, RNG, позицию д
 критериев. Возобновляется именно сохранённая лучшая точка, не последняя эпоха:
 
 ```bash
-python -m bridge_restore.train --config configs/train.yaml --resume runs/celeba_main/medium_bm_T1/best/lpips/checkpoint.pt
+python -m bridge_restore.train --config configs/train.yaml --resume runs/celeba_main_5ep/medium_bm_T1/best/lpips/checkpoint.pt
 ```
 
 Другие лучшие checkpoint должны соответствовать сохранённой истории. Если они
@@ -134,7 +141,7 @@ python -m bridge_restore.train --config configs/train.yaml --resume runs/celeba_
 Отдельная оценка (4096 тестовых изображений, все девять метрик):
 
 ```bash
-python -m bridge_restore.evaluate --checkpoint runs/celeba_main/medium_bm_T1/best/lpips/checkpoint.pt --config configs/evaluation/main.yaml --output runs/manual_test --split test --device cuda
+python -m bridge_restore.evaluate --checkpoint runs/celeba_main_5ep/medium_bm_T1/best/lpips/checkpoint.pt --config configs/evaluation/main.yaml --output runs/manual_test --split test --device cuda
 ```
 
 ## Локальная проверка
@@ -152,3 +159,5 @@ BRIDGE_QUALITY_SMOKE=1 CELEBA_ROOT=data/celeba INSIGHTFACE_ROOT="$HOME/.insightf
 reset накопителей, совместное использование сетей и совпадение restoration с
 baseline при identity-сэмплере. CUDA/BF16 и длительное обучение нужно проверить
 на сервере; локально CUDA отсутствует.
+
+Обновление скорости: проверка градиентов агрегируется на GPU перед единственным чтением флага; loss переносится на CPU один раз за обновление. Конфиги: 5 эпох, batch 64 × accumulation 1, новый output_dir runs/celeba_main_5ep. Это новая серия: прежние checkpoint с batch 32 × 2 нельзя продолжать с изменённой схемой через строгий resume. При прежней скорости чистое обучение сетки оценивалось в 27 часов; валидация и тесты требуют дополнительного бюджета, укладывание в 48 часов не гарантировано.

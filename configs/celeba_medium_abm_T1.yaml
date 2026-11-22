@@ -1,0 +1,112 @@
+seed: 42
+output_dir: runs/celeba_abm_b128_15ep/medium_abm_T1
+data:
+  factory: bridge_restore.data.datasets:CelebADataset
+  kwargs:
+    root: data/celeba
+    images_dir: img_align_celeba
+    partition_file: list_eval_partition.txt
+  image_size: 128
+  crop_mode: center_square
+  interpolation: bicubic
+  antialias: true
+  num_workers: 2
+split:
+  mode: official
+  manifest_path: null
+  group_by: identity
+  fractions:
+  - 0.8
+  - 0.1
+  - 0.1
+  seed: 42
+corruption:
+  factory: bridge_restore.data.corruptions:JPEGCorruption
+  kwargs:
+    quality: 10
+    subsampling: 2
+model:
+  mode: abm
+  channels: 64
+  num_res_blocks: 2
+  channel_mult:
+  - 1
+  - 1
+  - 2
+  - 3
+  - 4
+  attention_resolutions:
+  - 16
+  - 8
+  num_heads: 4
+  dropout: 0.1
+  use_checkpoint: false
+bridge:
+  sigma_max: 1.0
+  sigma_min: 0.001
+  sigma_data: 0.5
+  cov_xy: 0.0
+training:
+  batch_size: 128
+  grad_accum_steps: 1
+  max_steps: null
+  max_epochs: 15
+  early_stopping_patience: 4
+  lr: 0.0001
+  weight_decay: 0.0
+  precision: bfloat16
+  device: cuda
+  ema_decay: 0.992027944069944
+  validation_interval: 500
+  validation_batches: 10
+  checkpoint_interval: 1000
+  log_interval: 50
+sampling:
+  num_steps: 100
+  start_offset: 0.0001
+  clip_output: true
+evaluation:
+  enabled: true
+  weights: ema
+  unit: epoch
+  interval: 1
+  subset_size: 512
+  subset_seed: 42
+  batch_size: 128
+  metrics:
+    psnr: {}
+    ssim: {}
+    lpips:
+      backbone: alex
+    arcface:
+      det_size: 320
+      min_coverage: 0.9
+    musiq:
+      batch_size: 1
+  criteria:
+    lpips:
+      metric: lpips
+      mode: min
+      test: true
+  selection_metric: lpips
+  selection_mode: min
+  input_baseline: true
+  final_test: false
+  test_subset_size: 1024
+  test_metrics:
+    psnr: {}
+    ssim: {}
+    lpips:
+      backbone: alex
+    arcface:
+      det_size: 320
+      min_coverage: 0.9
+    musiq:
+      batch_size: 1
+    fid: {}
+    kid:
+      subset_size: 1000
+    observation_mse: {}
+    observation_mae: {}
+  visual_samples_path: configs/visual_samples/celeba_val.json
+  test_visual_samples_path: configs/visual_samples/celeba_test.json

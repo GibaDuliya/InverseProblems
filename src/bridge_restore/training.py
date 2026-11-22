@@ -5,6 +5,7 @@ from pathlib import Path
 import json
 import time
 import copy
+import math
 from tqdm.auto import tqdm
 from .evaluation.selection import BestSelection
 from dataclasses import replace
@@ -122,21 +123,28 @@ class Trainer:
         batches = [self._next_batch() for _ in range(min(self.config.training.grad_accum_steps, remaining))]
         count = sum(batch["x0"].shape[0] for batch in batches)
         self.optimizer.zero_grad(set_to_none=True)
-        total = 0.
+        total = torch.zeros((), device=self.device)
         for batch in batches:
             x0 = batch["x0"].to(self.device, non_blocking=True)
             xT = batch["xT"].to(self.device, non_blocking=True)
             with self._autocast():
                 losses = self.bridge.training_loss(self.model, x0, xT)
                 loss = losses.sum() / count
-            if not torch.isfinite(loss):
-                raise FloatingPointError("Nonfinite training loss")
             self.scaler.scale(loss).backward()
-            total += loss.detach().item()
+            total += loss.detach()
+        # Transfer loss once per optimizer update, not once per microbatch.
+        # Nonfinite losses/gradients must be rejected before optimizer/EMA update.
+        total = total.item()
+        if not math.isfinite(total):
+            raise FloatingPointError("Nonfinite training loss")
         self.scaler.unscale_(self.optimizer)
-        if not self.scaler.is_enabled() and any(
-                p.grad is not None and not torch.isfinite(p.grad).all() for p in self.model.parameters()):
-            raise FloatingPointError("Nonfinite gradients")
+        if not self.scaler.is_enabled():
+            # Keep all reductions on-device: Python bool per parameter would
+            # synchronize CUDA hundreds of times on every optimizer update.
+            finite = [torch.isfinite(p.grad).all() for p in self.model.parameters()
+                      if p.grad is not None]
+            if finite and not torch.stack(finite).all().item():
+                raise FloatingPointError("Nonfinite gradients")
         previous_scale = self.scaler.get_scale()
         self.scaler.step(self.optimizer)
         self.scaler.update()
@@ -183,8 +191,10 @@ class Trainer:
         cfg = self.config.training
         start = time.monotonic()
         skipped = 0
+        stopped_early = False
         def active():
-            return ((cfg.max_steps is None or self.step < cfg.max_steps) and
+            return (not stopped_early and
+                    (cfg.max_steps is None or self.step < cfg.max_steps) and
                     (cfg.max_epochs is None or self.completed_epochs < cfg.max_epochs))
         while active():
             # train_step advances the epoch only when fetching its first batch.
@@ -213,6 +223,13 @@ class Trainer:
                                else end_epoch and epoch % ec.interval == 0)
                         if due and self.last_validation_step != self.step:
                             self.evaluate_restoration()
+                            stopped_early = self.selection.should_stop(
+                                self.completed_epochs, cfg.early_stopping_patience)
+                            if stopped_early:
+                                self._log({"early_stopping": True, "completed_epochs": self.completed_epochs,
+                                           "patience": cfg.early_stopping_patience,
+                                           "best_epochs": {name: record["epoch"]
+                                                           for name, record in self.selection.best.items()}})
                     elif metrics["updated"] and self.step % cfg.validation_interval == 0:
                         self._log(self.validate())
                     if end_epoch:

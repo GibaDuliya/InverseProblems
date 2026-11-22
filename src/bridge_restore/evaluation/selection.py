@@ -20,6 +20,12 @@ class BestSelection:
         self.criteria = criteria
         self.best = {}
 
+    def should_stop(self, completed_epochs, patience):
+        return patience is not None and all(
+            name in self.best and completed_epochs - self.best[name]["epoch"] > patience
+            for name in self.criteria
+        )
+
     def update(self, summary, step, epoch):
         values = {name: summary["restoration"][rule["metric"]]["mean"]
                   for name, rule in self.criteria.items()}
