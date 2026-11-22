@@ -11,6 +11,7 @@ runs/
 /notebooks/
 .DS_Store
 /DDBM/
+/PVB/
 # /tests/ — tests are tracked
 /Bridges_Guidance.pdf
 /DDBM_analysis.md
