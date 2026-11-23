@@ -38,15 +38,22 @@ class JPEGCorruption:
         return {"quality": self.quality, "subsampling": self.subsampling,
                 "optimize": self.optimize, "progressive": self.progressive}
 
-    def __call__(self, image):
+    def encode(self, image):
         validate_image(image)
         array = image.detach().mul(255).round().to(torch.uint8).permute(1, 2, 0).numpy()
         buffer = BytesIO()
         Image.fromarray(array).save(buffer, format="JPEG", **self.to_config())
-        buffer.seek(0)
-        with Image.open(buffer) as decoded:
+        return buffer.getvalue()
+
+    @staticmethod
+    def decode(encoded):
+        with Image.open(BytesIO(encoded)) as decoded:
             result = np.array(decoded.convert("RGB"), dtype=np.float32, copy=True)
         return torch.from_numpy(result).permute(2, 0, 1).contiguous() / 255
+
+
+    def __call__(self, image):
+        return self.decode(self.encode(image))
 
 
 def build_corruption(config):

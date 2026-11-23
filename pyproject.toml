@@ -14,6 +14,7 @@ eval = ["torchmetrics>=1.4,<2", "torch-fidelity>=0.3,<0.4", "lpips>=0.1.4,<0.2",
 quality = ["pyiqa==0.1.13", "insightface==0.7.3", "onnxruntime>=1.17,<2", "opencv-python<4.12", "opencv-python-headless<4.12"]
 sweep = ["tqdm>=4.66", "matplotlib>=3.7"]
 test = ["pytest>=7"]
+soc-jpeg = ["jpeglib>=1.0.2,<2"]
 
 [project.scripts]
 bridge-sweep = "bridge_restore.sweep:main"
@@ -21,6 +22,7 @@ bridge-grid = "bridge_restore.grid:main"
 bridge-train = "bridge_restore.train:main"
 bridge-evaluate = "bridge_restore.evaluate:main"
 bridge-sample = "bridge_restore.sample:main"
+bridge-soc-train = "bridge_soc.train:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

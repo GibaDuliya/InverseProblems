@@ -7,31 +7,35 @@ from ..metrics import Metric, MetricBatch, build_metrics
 from .report import EvaluationReport
 from .visualization import load_visual_samples
 
+def evaluation_subset(dataset, config, split):
+    n = len(dataset)
+    if not n: raise ValueError("Empty evaluation dataset")
+    if config.subset_size is not None and config.subset_size > n: raise ValueError("Subset exceeds dataset size")
+    visual_ids = load_visual_samples(config.visual_samples_path, split)
+    visual_indices = []
+    if visual_ids:
+        if not hasattr(dataset, "sample_ids"): raise ValueError("Visual samples require dataset.sample_ids metadata")
+        lookup = {key: i for i, key in enumerate(dataset.sample_ids)}
+        missing = set(visual_ids) - set(lookup)
+        if missing: raise ValueError(f"Visual IDs absent from {split}: {sorted(missing)}")
+        visual_indices = [lookup[key] for key in visual_ids]
+    if config.subset_size is not None and config.subset_size < len(visual_indices):
+        raise ValueError("Evaluation subset smaller than visual panel")
+    if config.subset_size is None:
+        indices = list(range(n))
+    else:
+        excluded = set(visual_indices)
+        remaining = [i for i in range(n) if i not in excluded]
+        permutation = torch.randperm(len(remaining), generator=torch.Generator().manual_seed(config.subset_seed)).tolist()
+        indices = visual_indices + [remaining[i] for i in permutation[:config.subset_size-len(visual_indices)]]
+    return indices, visual_ids
+
 class RestorationEvaluator:
     """Persistent metrics and fixed subset; generation consumes global RNG."""
     def __init__(self, dataset, corruption, sampler, config, device, split="val"):
         self.config, self.sampler, self.device = config, sampler, device
         self.split = split
-        n = len(dataset)
-        if not n: raise ValueError("Empty evaluation dataset")
-        if config.subset_size is not None and config.subset_size > n: raise ValueError("Subset exceeds dataset size")
-        self.visual_ids = load_visual_samples(config.visual_samples_path, split)
-        visual_indices = []
-        if self.visual_ids:
-            if not hasattr(dataset, "sample_ids"): raise ValueError("Visual samples require dataset.sample_ids metadata")
-            lookup = {key: i for i, key in enumerate(dataset.sample_ids)}
-            missing = set(self.visual_ids) - set(lookup)
-            if missing: raise ValueError(f"Visual IDs absent from {split}: {sorted(missing)}")
-            visual_indices = [lookup[key] for key in self.visual_ids]
-        if config.subset_size is not None and config.subset_size < len(visual_indices):
-            raise ValueError("Evaluation subset smaller than visual panel")
-        if config.subset_size is None:
-            self.indices = list(range(n))
-        else:
-            excluded = set(visual_indices)
-            remaining = [i for i in range(n) if i not in excluded]
-            permutation = torch.randperm(len(remaining), generator=torch.Generator().manual_seed(config.subset_seed)).tolist()
-            self.indices = visual_indices + [remaining[i] for i in permutation[:config.subset_size-len(visual_indices)]]
+        self.indices, self.visual_ids = evaluation_subset(dataset, config, split)
         self.loader = DataLoader(Subset(dataset, self.indices), batch_size=config.batch_size, shuffle=False)
         self.metrics = build_metrics(config.metrics, device, corruption)
         # Independent accumulators, shared frozen networks and reference caches.
@@ -46,7 +50,7 @@ class RestorationEvaluator:
                     build_metrics({name: config.metrics[name]}, device, corruption)[name])
 
     @torch.no_grad()
-    def evaluate(self, model):
+    def evaluate(self, model, *, sample_batch=None):
         was_training = model.training
         model.eval()
         groups = {"restoration": self.metrics, "input": self.baseline}
@@ -58,7 +62,8 @@ class RestorationEvaluator:
         try:
             for batch in tqdm(self.loader, desc=self.split.capitalize(), unit="batch", leave=False):
                 x0, xT = batch["x0"].to(self.device), batch["xT"].to(self.device)
-                result = self.sampler.sample(model, xT)
+                result = (self.sampler.sample(model, xT) if sample_batch is None
+                          else sample_batch(model, batch, xT))
                 nfe = result.nfe
                 for i, key in enumerate(batch["sample_id"]):
                     if key in visual_set:

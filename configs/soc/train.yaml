@@ -1,0 +1,23 @@
+seed: 42
+output_dir: runs/soc/jpeg
+control:
+  teacher_checkpoint: runs/my_teacher/checkpoints/last.pt
+  teacher_weights: ema
+  mode: abm
+sampling:
+  clip_output: true
+reward:
+  name: jpeg_consistency
+  input: clipped
+training:
+  device: cuda
+  beta: 1.0
+  lr: 0.00001
+  batch_size: 1
+  grad_accum_steps: 1
+  max_steps: null
+  log_interval: 1
+  validation_interval: 100
+  checkpoint_interval: 100
+evaluation:
+  batch_size: 8

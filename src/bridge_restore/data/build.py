@@ -58,14 +58,14 @@ def build_loaders(train_dataset, val_dataset, test_dataset, batch_size, num_work
     return loaders
 
 
-def build_data(data_config, split_config, corruption_config, batch_size, seed):
+def build_data(data_config, split_config, corruption_config, batch_size, seed, *, dataset_factory=RestorationDataset):
     clean = build_clean_dataset(data_config)
     manifest = load_or_create_split(clean, split_config)
     corruption = build_corruption(corruption_config)
     preprocessing = ImagePreprocessor(data_config.image_size, data_config.crop_mode,
                                      data_config.interpolation, data_config.antialias)
     lookup = {key: index for index, key in enumerate(clean.sample_ids)}
-    datasets = [RestorationDataset(clean, [lookup[key] for key in ids], preprocessing, corruption)
+    datasets = [dataset_factory(clean, [lookup[key] for key in ids], preprocessing, corruption)
                 for ids in (manifest.train_ids, manifest.val_ids, manifest.test_ids)]
     loaders = build_loaders(*datasets, batch_size, data_config.num_workers, seed)
     return DataBundle(*loaders, corruption, manifest)

@@ -140,12 +140,16 @@ class RestorationDataset(Dataset):
     def __len__(self):
         return len(self.indices)
 
-    def __getitem__(self, index):
+    def _clean_sample(self, index):
         original_index = self.indices[index]
         sample = self.clean_dataset[original_index]
         if (sample.sample_id != self.clean_dataset.sample_ids[original_index]
                 or sample.group_id != self.clean_dataset.group_ids[original_index]):
             raise ValueError("Clean sample metadata do not match dataset metadata")
+        return sample
+
+    def __getitem__(self, index):
+        sample = self._clean_sample(index)
         x0 = self.preprocessor(sample.image)
         xT = self.corruption(x0.clone())
         validate_image(xT)
